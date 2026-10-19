@@ -156,7 +156,8 @@ let _tw=null;
 async function ocrText(f){
   if(!_tw){
     const mod=await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
-    _tw=await mod.createWorker('chi_sim');
+    const Tesseract=mod.default||mod;
+    _tw=await Tesseract.createWorker('chi_sim');
   }
   const {data:{text}}=await _tw.recognize(f);
   return text;
