@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>票匣 · 电子发票台账</title>
+<meta name="description" content="批量识别电子发票PDF,自动建台账,全部本地解析不上传。">
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0f172a">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--ink:#f1f5f9;--mut:#94a3b8;--acc:#38bdf8;--ok:#34d399;--warn:#fbbf24;--red:#f87171}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);min-height:100vh}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 14px 60px}
+header{text-align:center;padding:24px 0 16px}
+header h1{font-size:1.7rem;letter-spacing:.2em}
+header h1 span{color:var(--acc)}
+header p{color:var(--mut);font-size:.8rem;margin-top:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+#drop{border:2px dashed #475569;border-radius:14px;background:#16213a;text-align:center;padding:40px 16px;cursor:pointer;transition:.2s}
+#drop.over{border-color:var(--acc);background:#1a2b4a}
+#drop .big{font-size:2.2rem}
+#drop p{margin-top:10px;color:#bae6fd;font-size:.9rem}
+#drop small{color:var(--mut);font-size:.75rem}
+input[type=file]{display:none}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+.btn{border:none;border-radius:10px;padding:11px 20px;font-size:.9rem;cursor:pointer;letter-spacing:.03em}
+.btn-p{background:var(--acc);color:#082f49;font-weight:600}
+.btn-g{background:#334155;color:var(--ink)}
+.btn-r{background:#7f1d1d;color:#fecaca}
+.btn:disabled{opacity:.4;cursor:default}
+.stat{display:flex;gap:22px;flex-wrap:wrap;font-size:.85rem;color:var(--mut)}
+.stat b{color:var(--ok);font-size:1.1rem;margin-left:4px}
+table{width:100%;border-collapse:collapse;font-size:.78rem}
+th,td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--mut);font-weight:500;font-size:.72rem}
+tbody tr:hover{background:#16213a}
+td.num{color:var(--acc);font-family:monospace}
+td.miss{color:var(--warn)}
+tfoot td{color:var(--ok);font-weight:700;border-bottom:none}
+.tblwrap{overflow-x:auto}
+.del{color:var(--red);background:none;border:none;cursor:pointer;font-size:.8rem}
+.empty{text-align:center;color:var(--mut);padding:30px 0;font-size:.85rem}
+.prog{font-size:.8rem;color:var(--warn);margin-top:8px}
+.note{font-size:.72rem;color:var(--mut);text-align:center;margin-top:8px;line-height:1.8}
+dialog{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:14px;padding:20px;max-width:92vw}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+pre{white-space:pre-wrap;font-size:.72rem;max-height:60vh;overflow:auto;color:var(--mut)}
+.tag{display:inline-block;font-size:.68rem;padding:2px 8px;border-radius:20px;background:#164e63;color:#a5f3fc}
+.tag.sp{background:#4a2c10;color:#fde68a}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>票<span>匣</span></h1><p>电子发票批量识别 · 自动建台账 —— 纯本地解析，票据不上传</p></header>
+
+<div class="card">
+<div id="drop">
+<div class="big">🧾</div>
+<p>点击选择 PDF 电子发票，或拖拽到这里（可批量）</p>
+<small>支持增值税电子普票 / 专票 / 数电发票 PDF</small>
+<input type="file" id="file" accept="application/pdf,.pdf" multiple>
+</div>
+<div class="prog" id="prog"></div>
+</div>
+
+<div class="card" id="listcard" style="display:none">
+<div class="bar" style="margin-bottom:12px">
+<div class="stat"><span>发票 <b id="st-n">0</b> 张</span><span>价税合计 <b id="st-t">¥0</b></span><span>税额 <b id="st-x">¥0</b></span></div>
+<div style="display:flex;gap:8px">
+<button class="btn btn-g" id="exp">导出 CSV</button>
+<button class="btn btn-g" id="copy">复制台账</button>
+<button class="btn btn-r" id="clr">清空</button>
+</div>
+</div>
+<div class="tblwrap"><table>
+<thead><tr><th>#</th><th>类型</th><th>发票代码</th><th>发票号码</th><th>开票日期</th><th>价税合计</th><th>不含税金额</th><th>税额</th><th>销售方</th><th>文件名</th><th></th></tr></thead>
+<tbody id="tb"></tbody>
+<tfoot><tr><td colspan="5">合计</td><td id="ft-t"></td><td id="ft-a"></td><td id="ft-x"></td><td colspan="3"></td></tr></tfoot>
+</table></div>
+</div>
+
+<div class="card" id="failcard" style="display:none">
+<b style="font-size:.85rem;color:var(--warn)">未能识别的文件（<span id="fail-n"></span>）</b>
+<div class="empty" id="faillist" style="text-align:left;padding:10px 0"></div>
+<p class="note" style="text-align:left">可点击文件名查看提取到的原文，手工补录后重新导入。</p>
+</div>
+
+<p class="note">🔒 所有解析均在你的设备上完成，发票内容不会发送到任何服务器。<br>当前支持文字版 PDF 电子发票；扫描图片版 / OFD 版暂不支持。</p>
+</div>
+
+<dialog id="dlg"><b id="dlg-t"></b><pre id="dlg-b"></pre><div style="text-align:right;margin-top:12px"><button class="btn btn-g" onclick="document.getElementById('dlg').close()">关闭</button></div></dialog>
+
+<script src="./pdf.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+pdfjsLib.GlobalWorkerOptions.workerSrc='./pdf.worker.min.js';
+let rows=[]; // {type,dm,hm,date,total,amt,tax,seller,fname,raw,ts}
+try{rows=JSON.parse(localStorage.getItem('piaoxia')||'[]')}catch(e){rows=[]}
+
+const drop=$('drop'),fi=$('file');
+drop.onclick=()=>fi.click();
+['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',ev=>addPDFs(ev.dataTransfer.files));
+fi.onchange=()=>{addPDFs(fi.files);fi.value=''};
+
+async function addPDFs(fs){
+  const pdfs=[...fs].filter(f=>/\.pdf$/i.test(f.name));
+  if(!pdfs.length)return;
+  const seen=new Set(rows.map(r=>r.fname+'|'+r.hm));
+  let n=0;
+  for(const f of pdfs){
+    $('prog').textContent=`正在解析 ${++n}/${pdfs.length}：${f.name}`;
+    try{
+      const buf=await f.arrayBuffer();
+      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+      let txt='';
+      for(let p=1;p<=Math.min(pdf.numPages,3);p++){
+        const pg=await pdf.getPage(p);
+        const tc=await pg.getTextContent();
+        txt+=tc.items.map(i=>i.str).join('')+'\n';
+      }
+      const r=parseInvoice(txt,f.name);
+      const key=r.fname+'|'+r.hm;
+      if(r.hm&&seen.has(key)){r.dup=true}
+      seen.add(key);
+      rows.push(r);
+    }catch(e){rows.push({fname:f.name,hm:'',err:'解析失败',raw:String(e).slice(0,200),ts:Date.now()})}
+    render();
+  }
+  $('prog').textContent='';
+  save();render();
+}
+function num(s){if(!s)return 0;return parseFloat(String(s).replace(/,/g,''))||0}
+function money(s){const n=num(s);return n?('¥'+n.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})):''}
+
+function parseInvoice(t,fname){
+  const r={fname,raw:t.slice(0,4000),ts:Date.now()};
+  const clean=t.replace(/\s+/g,'');
+  // 类型
+  if(/数电|电子发票[（(]|数字化/.test(clean))r.type=/专用/.test(clean)?'数电专票':'数电普票';
+  else if(/专用发票/.test(clean))r.type='电子专票';
+  else r.type='电子普票';
+  // 代码号码
+  let m=clean.match(/发票代码[：:]*(\d{10,12})/);r.dm=m?m[1]:'';
+  m=clean.match(/发票号码[：:]*(\d{8,20})/);r.hm=m?m[1]:'';
+  // 日期
+  m=clean.match(/开票日期[：:]*(\d{4}年\d{1,2}月\d{1,2}日)/);r.date=m?m[1]:'';
+  // 价税合计(小写)
+  m=clean.match(/\(小写\)[¥￥]?\s*([\d,]+\.\d{1,2})|价税合计[^\d¥￥]*[¥￥]?\s*([\d,]+\.\d{1,2})/);
+  r.total=num(m?(m[1]||m[2]):'');
+  // 不含税金额 / 税额: 找"合计"行附近
+  m=clean.match(/合计[^\d]*([\d,]+\.\d{2})[^\d]*([\d,]+\.\d{2})/);
+  if(m){const a=num(m[1]),b=num(m[2]);
+    // 价税合计≈金额+税额, 用来区分谁是税额
+    if(r.total&&Math.abs(a+b-r.total)<1){r.amt=a;r.tax=b}
+    else{r.amt=a;r.tax=b}
+  }
+  // 销售方
+  m=t.match(/销售方[名称]*[：:]\s*([^\n]{2,40})/);r.seller=m?m[1].trim().split(/货物|项目|纳税人|地址|电话|开户|购买方|备注|合计/)[0].trim():'';
+  if(!r.seller){m=clean.match(/销售方名称[：:]*([^：:]{2,30}?)(?=(纳税人|地址|开户|购买方|备注|$))/);r.seller=m?m[1]:''}
+  return r;
+}
+
+function save(){try{localStorage.setItem('piaoxia',JSON.stringify(rows.map(r=>({...r,raw:''}))))}catch(e){}}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+
+function render(){
+  const ok=rows.filter(r=>r.hm&&!r.err),fail=rows.filter(r=>!r.hm||r.err);
+  $('listcard').style.display=ok.length?'':'none';
+  $('failcard').style.display=fail.length?'':'none';
+  const tot=ok.reduce((s,r)=>s+r.total,0),amt=ok.reduce((s,r)=>s+(r.amt||0),0),tax=ok.reduce((s,r)=>s+(r.tax||0),0);
+  $('st-n').textContent=ok.length;
+  $('st-t').textContent=money(tot);$('st-x').textContent=money(tax);
+  $('ft-t').textContent=money(tot);$('ft-a').textContent=money(amt);$('ft-x').textContent=money(tax);
+  $('tb').innerHTML=ok.map((r,i)=>`<tr>
+    <td>${i+1}</td><td><span class="tag${/专/.test(r.type)?' sp':''}">${esc(r.type)}</span>${r.dup?' <span class="tag">疑重</span>':''}</td>
+    <td class="num">${esc(r.dm)||'<span class="miss">—</span>'}</td><td class="num">${esc(r.hm)}</td>
+    <td>${esc(r.date)||'<span class="miss">未识别</span>'}</td>
+    <td class="num">${money(r.total)||'<span class="miss">未识别</span>'}</td>
+    <td class="num">${money(r.amt)||'—'}</td><td class="num">${money(r.tax)||'—'}</td>
+    <td>${esc(r.seller)||'—'}</td><td>${esc(r.fname)}</td>
+    <td><button class="del" data-i="${rows.indexOf(r)}">删除</button></td></tr>`).join('');
+  $('fail-n').textContent=fail.length;
+  $('faillist').innerHTML=fail.map(r=>`<div style="margin:6px 0"><a href="#" data-raw="${rows.indexOf(r)}" style="color:var(--acc);font-size:.8rem">${esc(r.fname)}</a> <span style="color:var(--mut);font-size:.75rem">${esc(r.err||'关键字段未识别')}</span></div>`).join('');
+  document.querySelectorAll('.del').forEach(b=>b.onclick=()=>{rows.splice(+b.dataset.i,1);save();render()});
+  document.querySelectorAll('[data-raw]').forEach(a=>a.onclick=e=>{e.preventDefault();const r=rows[+a.dataset.raw];$('dlg-t').textContent=r.fname;$('dlg-b').textContent=r.raw||'(无)';$('dlg').showModal()});
+}
+
+$('exp').onclick=()=>{
+  const head='类型,发票代码,发票号码,开票日期,价税合计,不含税金额,税额,销售方,文件名';
+  const lines=rows.filter(r=>r.hm).map(r=>[r.type,r.dm,r.hm,r.date,r.total||'',r.amt||'',r.tax||'',r.seller,r.fname].map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','));
+  const csv='\uFEFF'+head+'\n'+lines.join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download='发票台账.csv';a.click();
+};
+$('copy').onclick=()=>{
+  const lines=rows.filter(r=>r.hm).map((r,i)=>`${i+1}. ${r.type} ${r.hm} ${r.date} ${money(r.total)} ${r.seller}`);
+  navigator.clipboard.writeText(lines.join('\n')).then(()=>alert('已复制 '+lines.length+' 条'));
+};
+$('clr').onclick=()=>{if(confirm('清空全部台账记录?')){rows=[];save();render()}};
+
+render();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body>
+</html>
