@@ -237,7 +237,8 @@ function render(){
     <td>${esc(r.seller)||'—'}</td><td>${esc(r.fname)}</td>
     <td><button class="del" data-i="${rows.indexOf(r)}">删除</button></td></tr>`).join('');
   $('fail-n').textContent=fail.length;
-  $('faillist').innerHTML=fail.map(r=>`<div style="margin:6px 0"><a href="#" data-raw="${rows.indexOf(r)}" style="color:var(--acc);font-size:.8rem">${esc(r.fname)}</a> <span style="color:var(--mut);font-size:.75rem">${esc(r.err||'关键字段未识别')}</span></div>`).join('');
+  $('faillist').innerHTML=fail.map(r=>{const gi=rows.indexOf(r);return `<div style="margin:6px 0;display:flex;align-items:center;gap:8px"><a href="#" data-raw="${gi}" style="color:var(--acc);font-size:.8rem;flex:1">${esc(r.fname)}</a> <span style="color:var(--mut);font-size:.75rem">${esc(r.err||'关键字段未识别')}</span> <button class="del" data-fdel="${gi}">删除</button></div>`}).join('');
+  document.querySelectorAll('[data-fdel]').forEach(b=>b.onclick=()=>{rows.splice(+b.dataset.fdel,1);save();render()});
   document.querySelectorAll('.del').forEach(b=>b.onclick=()=>{rows.splice(+b.dataset.i,1);save();render()});
   document.querySelectorAll('[data-raw]').forEach(a=>a.onclick=e=>{e.preventDefault();const r=rows[+a.dataset.raw];$('dlg-t').textContent=r.fname;$('dlg-b').textContent=r.raw||'(无)';$('dlg').showModal()});
 }
