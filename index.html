@@ -57,9 +57,9 @@ pre{white-space:pre-wrap;font-size:.72rem;max-height:60vh;overflow:auto;color:va
 <div class="card">
 <div id="drop">
 <div class="big">🧾</div>
-<p>点击选择 PDF 电子发票，或拖拽到这里（可批量）</p>
-<small>支持增值税电子普票 / 专票 / 数电发票 PDF</small>
-<input type="file" id="file" accept="application/pdf,.pdf" multiple>
+<p>点击选择发票文件，或拖拽到这里（可批量）</p>
+<small>支持 PDF / OFD / 图片（拍照/截图），电子普票 / 专票 / 数电发票</small>
+<input type="file" id="file" accept=".pdf,.ofd,image/*" multiple>
 </div>
 <div class="prog" id="prog"></div>
 </div>
@@ -86,12 +86,13 @@ pre{white-space:pre-wrap;font-size:.72rem;max-height:60vh;overflow:auto;color:va
 <p class="note" style="text-align:left">可点击文件名查看提取到的原文，手工补录后重新导入。</p>
 </div>
 
-<p class="note">🔒 所有解析均在你的设备上完成，发票内容不会发送到任何服务器。<br>当前支持文字版 PDF 电子发票；扫描图片版 / OFD 版暂不支持。</p>
+<p class="note">🔒 所有解析均在你的设备上完成，发票内容不会发送到任何服务器。<br>图片识别首次使用时需联网下载识别引擎（约 10MB，一次即可），识别率取决于图片清晰度。<br>OFD 为直接解包读取文字层；图片版 PDF 请先截图后上传。</p>
 </div>
 
 <dialog id="dlg"><b id="dlg-t"></b><pre id="dlg-b"></pre><div style="text-align:right;margin-top:12px"><button class="btn btn-g" onclick="document.getElementById('dlg').close()">关闭</button></div></dialog>
 
 <script src="./pdf.min.js"></script>
+<script src="./jszip.min.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 pdfjsLib.GlobalWorkerOptions.workerSrc='./pdf.worker.min.js';
@@ -102,31 +103,83 @@ const drop=$('drop'),fi=$('file');
 drop.onclick=()=>fi.click();
 ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('over')}));
-drop.addEventListener('drop',ev=>addPDFs(ev.dataTransfer.files));
-fi.onchange=()=>{addPDFs(fi.files);fi.value=''};
+drop.addEventListener('drop',ev=>addFiles(ev.dataTransfer.files));
+fi.onchange=()=>{addFiles(fi.files);fi.value=''};
 
-async function addPDFs(fs){
-  const pdfs=[...fs].filter(f=>/\.pdf$/i.test(f.name));
-  if(!pdfs.length)return;
+async function pdfText(f){
+  const buf=await f.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  let txt='';
+  for(let p=1;p<=Math.min(pdf.numPages,3);p++){
+    const pg=await pdf.getPage(p);
+    const tc=await pg.getTextContent();
+    txt+=tc.items.map(i=>i.str).join('')+'\n';
+  }
+  return txt;
+}
+// OFD: zip 包内 XML,按坐标排序提取文字
+async function ofdText(f){
+  const zip=await JSZip.loadAsync(f);
+  const read=async p=>{const z=zip.file(p);return z?z.async('text'):null};
+  const DP=x=>new DOMParser().parseFromString(x,'text/xml');
+  const tag=(d,t)=>Array.from(d.getElementsByTagNameNS('*',t));
+  const ofdXml=await read('OFD.xml');
+  if(!ofdXml)throw '非 OFD 文件';
+  const roots=tag(DP(ofdXml),'DocRoot');
+  if(!roots.length)throw 'OFD 结构异常';
+  const base=roots[0].textContent.trim();
+  const dir=base.slice(0,base.lastIndexOf('/')+1);
+  const docXml=await read(base);
+  if(!docXml)throw 'OFD 缺少 Document';
+  const pages=tag(DP(docXml),'Page').slice(0,3);
+  let full='';
+  for(const pg of pages){
+    const cxml=await read(dir+pg.getAttribute('BaseLoc'));
+    if(!cxml)continue;
+    const items=tag(DP(cxml),'TextCode').map(e=>({
+      x:parseFloat(e.getAttribute('X')||0),
+      y:parseFloat(e.getAttribute('Y')||0),
+      t:e.textContent}));
+    items.sort((a,b)=>(a.y-b.y)||(a.x-b.x));
+    let lastY=-1e9,line='';
+    for(const it of items){
+      if(line&&Math.abs(it.y-lastY)>3){full+=line+'\n';line=''}
+      line+=it.t;lastY=it.y;
+    }
+    if(line)full+=line+'\n';
+  }
+  if(!full.trim())throw 'OFD 无文字层(可能是图片版)';
+  return full;
+}
+// 图片 OCR: 首次使用时从 CDN 加载识别引擎
+let _tw=null;
+async function ocrText(f){
+  if(!_tw){
+    const mod=await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
+    _tw=await mod.createWorker('chi_sim');
+  }
+  const {data:{text}}=await _tw.recognize(f);
+  return text;
+}
+
+async function addFiles(fs){
+  const list=[...fs].filter(f=>/\.pdf$/i.test(f.name)||/\.ofd$/i.test(f.name)||f.type.startsWith('image/'));
+  if(!list.length)return;
   const seen=new Set(rows.map(r=>r.fname+'|'+r.hm));
   let n=0;
-  for(const f of pdfs){
-    $('prog').textContent=`正在解析 ${++n}/${pdfs.length}：${f.name}`;
+  for(const f of list){
+    n++;
+    const kind=/\.ofd$/i.test(f.name)?'OFD':f.type.startsWith('image/')?'图片':'PDF';
+    $('prog').textContent=`正在解析 ${n}/${list.length}（${kind}）：${f.name}`;
     try{
-      const buf=await f.arrayBuffer();
-      const pdf=await pdfjsLib.getDocument({data:buf}).promise;
-      let txt='';
-      for(let p=1;p<=Math.min(pdf.numPages,3);p++){
-        const pg=await pdf.getPage(p);
-        const tc=await pg.getTextContent();
-        txt+=tc.items.map(i=>i.str).join('')+'\n';
-      }
+      const txt=/\.ofd$/i.test(f.name)?await ofdText(f):f.type.startsWith('image/')?await ocrText(f):await pdfText(f);
       const r=parseInvoice(txt,f.name);
+      r.kind=kind;
       const key=r.fname+'|'+r.hm;
       if(r.hm&&seen.has(key)){r.dup=true}
       seen.add(key);
       rows.push(r);
-    }catch(e){rows.push({fname:f.name,hm:'',err:'解析失败',raw:String(e).slice(0,200),ts:Date.now()})}
+    }catch(e){rows.push({fname:f.name,hm:'',err:'解析失败:'+String(e).slice(0,60),raw:'',ts:Date.now()})}
     render();
   }
   $('prog').textContent='';
@@ -175,7 +228,7 @@ function render(){
   $('st-t').textContent=money(tot);$('st-x').textContent=money(tax);
   $('ft-t').textContent=money(tot);$('ft-a').textContent=money(amt);$('ft-x').textContent=money(tax);
   $('tb').innerHTML=ok.map((r,i)=>`<tr>
-    <td>${i+1}</td><td><span class="tag${/专/.test(r.type)?' sp':''}">${esc(r.type)}</span>${r.dup?' <span class="tag">疑重</span>':''}</td>
+    <td>${i+1}</td><td><span class="tag${/专/.test(r.type)?' sp':''}">${esc(r.type)}</span>${r.dup?' <span class="tag">疑重</span>':''}<br><span style="font-size:.65rem;color:var(--mut)">${esc(r.kind||'PDF')}</span></td>
     <td class="num">${esc(r.dm)||'<span class="miss">—</span>'}</td><td class="num">${esc(r.hm)}</td>
     <td>${esc(r.date)||'<span class="miss">未识别</span>'}</td>
     <td class="num">${money(r.total)||'<span class="miss">未识别</span>'}</td>
